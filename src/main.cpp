@@ -7,8 +7,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <ArduinoOTA.h>
 
+#define MAIN_LIGHT_PIN 2
 #define LED_PIN 4
-#define LED_COUNT 3
+#define LED_COUNT 300
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -22,15 +23,16 @@ const char *mqtt_broker = "192.168.50.84";
 const char *mqtt_username = "daeronhing";
 const char *mqtt_password = "d@er0n_h1ng";
 const char *command_topic = "/my_room/light/set";
+const char *main_light_command_topic = "/my_room/main_light/set";
 const char *state_topic = "/my_room/light/state";
 const int max_mqtt_reconnect_attempts = 5;
 
-const uint8_t max_brightness = 3;
+const uint8_t max_brightness = 255;
 uint8_t red = 255;
 uint8_t green = 255;
 uint8_t blue = 255;
 uint8_t brightness = 128;
-bool switch_on = true;
+bool led_switch_on = false;
 bool need_update = false;
 
 WiFiClient espClient;
@@ -40,11 +42,18 @@ bool connect_mqtt();
 void get_board_info();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
 void set_led_color(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness);
+void switch_main_light_on(bool on);
 
 void setup()
 {
 	strip.begin();
-	set_led_color(red, green, blue, brightness);
+	strip.setBrightness(max_brightness);
+	// set_led_color(red, green, blue, brightness);
+	strip.clear();
+	strip.show();
+
+	pinMode(MAIN_LIGHT_PIN, OUTPUT);
+	digitalWrite(MAIN_LIGHT_PIN, LOW);
 
 	Serial.begin(115200);
 	get_board_info();
@@ -118,6 +127,7 @@ void setup()
 		{
 			Serial.println("Connected");
 			mqtt_client.subscribe(command_topic);
+			mqtt_client.subscribe(main_light_command_topic);
 			break;
 		}
 		else if (i < (max_mqtt_reconnect_attempts - 1))
@@ -165,7 +175,7 @@ void loop()
 
 	if (need_update)
 	{
-		if (switch_on)
+		if (led_switch_on)
 		{
 			set_led_color(red, green, blue, brightness);
 		}
@@ -187,6 +197,7 @@ bool connect_mqtt()
 	{
 		Serial.println("Connected");
 		mqtt_client.subscribe(command_topic);
+		mqtt_client.subscribe(main_light_command_topic);
 		return true;
 	}
 	else
@@ -240,7 +251,27 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length)
 	JsonDocument command_doc;
 	DeserializationError error = deserializeJson(command_doc, payload);
 
-	if (error.code() == DeserializationError::Ok)
+	// Check which topic did the message come from
+	if (error.code() != DeserializationError::Ok)
+	{
+		Serial.print("Error: ");
+		Serial.println(error.c_str());
+		return;
+	}
+
+	else if (strcmp(topic, main_light_command_topic) == 0)
+	{
+		if (command_doc["state"] == "ON")
+		{
+			switch_main_light_on(true);
+		}
+		else if (command_doc["state"] == "OFF")
+		{
+			switch_main_light_on(false);
+		}
+	}
+
+	else if (strcmp(topic, command_topic) == 0)
 	{
 		// if (command_doc.containsKey("state"))
 		if (!command_doc["state"].isNull())
@@ -250,11 +281,11 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length)
 			Serial.println(state);
 			if (strcmp(state, "ON") == 0)
 			{
-				switch_on = true;
+				led_switch_on = true;
 			}
 			else if (strcmp(state, "OFF") == 0)
 			{
-				switch_on = false;
+				led_switch_on = false;
 			}
 		}
 
@@ -285,11 +316,6 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length)
 		}
 		need_update = true;
 	}
-	else
-	{
-		Serial.print("Error: ");
-		Serial.println(error.c_str());
-	}
 }
 
 void set_led_color(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness)
@@ -304,4 +330,16 @@ void set_led_color(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness)
 	}
 
 	strip.show();
+}
+
+void switch_main_light_on(bool on)
+{
+	if (on)
+	{
+		digitalWrite(MAIN_LIGHT_PIN, LOW);
+	}
+	else
+	{
+		digitalWrite(MAIN_LIGHT_PIN, HIGH);
+	}
 }
